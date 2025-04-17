@@ -1,0 +1,75 @@
+name: Build and Push Nextcloud Docker Image
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  # Allow manual triggering
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: nextcloud_docker_fpm_alpine
+  VARIANT: fpm-alpine
+  PLATFORM: linux/arm64
+
+jobs:
+  build-and-push:
+    name: Build and Push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run update.sh script
+        run: ./update.sh
+
+      - name: Get version from versions.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.["31"].version' versions.json)
+          BRANCH=$(jq -r '.["31"].branch' versions.json)
+          PHP_VERSION=$(jq -r '.["31"].variants["fpm-alpine"].phpVersion' versions.json)
+          BASE_VERSION=$(jq -r '.["31"].variants["fpm-alpine"].baseVersion' versions.json)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          echo "PHP_VERSION=$PHP_VERSION" >> $GITHUB_ENV
+          echo "BASE_VERSION=$BASE_VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./31/fpm-alpine
+          file: ./31/fpm-alpine/Dockerfile
+          platforms: ${{ env.PLATFORM }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}-fpm-alpine
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.BRANCH }}-fpm-alpine
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest-fpm-alpine
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ github.event.repository.pushed_at }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.licenses=AGPL-3.0
+            org.opencontainers.image.title=Nextcloud FPM Alpine
+            org.opencontainers.image.description=Nextcloud ${{ env.VERSION }} with PHP ${{ env.PHP_VERSION }} on Alpine ${{ env.BASE_VERSION }}
